@@ -18,7 +18,8 @@ $termo_busca = $_GET['q'] ?? '';
 
 // --- CONFIGURAÇÃO DA QUERY ---
 
-// Subquery inteligente: Verifica se EU (usuário logado) já avaliei esta doação específica
+// Subquery: Verifica se EU já avaliei esta doação
+// Usamos :uid aqui. Se usarmos :uid novamente no WHERE, o db.php (emulate=true) resolve.
 $sql_check_avaliacao = ", (SELECT COUNT(*) FROM reviews r WHERE r.doacao_id = d.id AND r.avaliador_id = :uid) as ja_avaliou";
 
 $sql = "SELECT d.*, u.nome as produtor_nome, 
@@ -32,29 +33,31 @@ $sql = "SELECT d.*, u.nome as produtor_nome,
 // --- FILTROS DE VISUALIZAÇÃO ---
 
 if ($tipo_usuario == 'produtor') {
-    // Produtor vê tudo que é seu (incluindo histórico 'entregue')
+    // Produtor vê suas doações
     $sql = "SELECT d.*, u.nome as produtor_nome, 
             (SELECT nome FROM users WHERE id = d.distribuidor_id) as distribuidor_nome,
             (SELECT nome FROM users WHERE id = d.cozinheiro_id) as cozinheiro_nome
             $sql_check_avaliacao
             FROM donations d JOIN users u ON d.produtor_id = u.id 
             WHERE d.produtor_id = :uid";
+    
+    // Parâmetro :uid é usado 2 vezes na query (subquery + where). Emulate=true resolve.
     $params = ['uid' => $user_id];
 
 } else {
+    // Distribuidor e Cozinheiro
+    
+    // Base de parâmetros
+    $params = ['cidade' => $cidade_usuario, 'uid' => $user_id];
+
     // Filtros de busca textual
     if ($termo_busca) {
         $sql .= " AND (d.titulo LIKE :busca OR d.descricao LIKE :busca)";
-        $params = ['cidade' => $cidade_usuario, 'uid' => $user_id, 'busca' => "%$termo_busca%"];
-    } else {
-        $params = ['cidade' => $cidade_usuario, 'uid' => $user_id];
+        $params['busca'] = "%$termo_busca%";
     }
     
     if ($tipo_usuario == 'distribuidor') {
-        // Distribuidor vê:
-        // 1. Disponíveis (Oportunidades)
-        // 2. Coletadas/Aguardando (Processo atual)
-        // 3. Entregue (Histórico para avaliar o cozinheiro) -> ADICIONADO AQUI
+        // Distribuidor vê: Disponíveis, Coletadas, Aguardando, Entregue (Histórico)
         $sql .= " AND (
                     d.status = 'disponivel' 
                     OR (
@@ -62,13 +65,11 @@ if ($tipo_usuario == 'produtor') {
                         AND d.distribuidor_id = :uid_filter
                     )
                   )";
+        // Usamos um nome diferente :uid_filter para evitar conflito lógico, embora PDO aceite repetição
         $params['uid_filter'] = $user_id;
 
     } elseif ($tipo_usuario == 'cozinheiro') {
-        // Cozinheiro vê:
-        // 1. Disponíveis (Visualização de mercado)
-        // 2. Aguardando Aceite (Solicitações pendentes)
-        // 3. Entregue (Histórico)
+        // Cozinheiro vê: Disponíveis, Entregues, Aguardando
         $sql .= " AND (
                     d.status = 'disponivel' 
                     OR (
@@ -82,9 +83,13 @@ if ($tipo_usuario == 'produtor') {
 
 $sql .= " ORDER BY FIELD(d.status, 'aguardando_aceite', 'coletada', 'disponivel', 'entregue'), d.created_at DESC";
 
-$stmt = $pdo->prepare($sql);
-$stmt->execute($params);
-$doacoes = $stmt->fetchAll();
+try {
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $doacoes = $stmt->fetchAll();
+} catch (PDOException $e) {
+    die("Erro ao carregar feed: " . $e->getMessage());
+}
 ?>
 
 <!DOCTYPE html>
@@ -155,7 +160,6 @@ $doacoes = $stmt->fetchAll();
                         </div>
 
                         <div class="mt-auto">
-                            
                             <?php if($tipo_usuario == 'distribuidor'): ?>
                                 <?php if ($d['status'] == 'disponivel'): ?>
                                     <form action="processar_acao.php" method="POST">
@@ -163,7 +167,6 @@ $doacoes = $stmt->fetchAll();
                                         <input type="hidden" name="doacao_id" value="<?= $d['id'] ?>">
                                         <button class="w-full bg-blue-600 text-white py-2 rounded text-sm hover:bg-blue-700">🚚 Coletar</button>
                                     </form>
-                                
                                 <?php elseif ($d['status'] == 'coletada' && $d['distribuidor_id'] == $user_id): ?>
                                     <button onclick="toggleModal(<?= $d['id'] ?>)" class="w-full bg-orange-500 text-white py-2 rounded text-sm hover:bg-orange-600">👨‍🍳 Escolher Destino</button>
                                     <div id="modal-<?= $d['id'] ?>" class="hidden fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
@@ -185,15 +188,11 @@ $doacoes = $stmt->fetchAll();
                                             </form>
                                         </div>
                                     </div>
-
                                 <?php elseif ($d['status'] == 'aguardando_aceite'): ?>
-                                    <div class="text-center text-xs text-yellow-600 bg-yellow-50 py-2 rounded border border-yellow-100">⏳ Aguardando <?= htmlspecialchars($d['cozinheiro_nome']) ?> aceitar</div>
-
+                                    <div class="text-center text-xs text-yellow-600 bg-yellow-50 py-2 rounded border border-yellow-100">⏳ Aguardando <?= htmlspecialchars($d['cozinheiro_nome']) ?></div>
                                 <?php elseif ($d['status'] == 'entregue'): ?>
                                     <?php if(!$d['ja_avaliou']): ?>
-                                        <a href="avaliar.php?doacao=<?= $d['id'] ?>&alvo=<?= $d['cozinheiro_id'] ?>" class="block text-center w-full border border-yellow-400 text-yellow-600 py-2 rounded text-sm hover:bg-yellow-50">
-                                            ★ Avaliar Cozinheiro
-                                        </a>
+                                        <a href="avaliar.php?doacao=<?= $d['id'] ?>&alvo=<?= $d['cozinheiro_id'] ?>" class="block text-center w-full border border-yellow-400 text-yellow-600 py-2 rounded text-sm hover:bg-yellow-50">★ Avaliar Cozinheiro</a>
                                     <?php else: ?>
                                         <div class="text-center text-green-600 text-sm font-medium">Avaliação Enviada ✓</div>
                                     <?php endif; ?>
@@ -222,16 +221,13 @@ $doacoes = $stmt->fetchAll();
                             <?php elseif($tipo_usuario == 'produtor'): ?>
                                 <?php if($d['status'] == 'entregue'): ?>
                                     <?php if(!$d['ja_avaliou'] && $d['distribuidor_id']): ?>
-                                        <a href="avaliar.php?doacao=<?= $d['id'] ?>&alvo=<?= $d['distribuidor_id'] ?>" class="block text-center w-full border border-yellow-400 text-yellow-600 py-2 rounded text-sm hover:bg-yellow-50">
-                                            ★ Avaliar Distribuidor
-                                        </a>
+                                        <a href="avaliar.php?doacao=<?= $d['id'] ?>&alvo=<?= $d['distribuidor_id'] ?>" class="block text-center w-full border border-yellow-400 text-yellow-600 py-2 rounded text-sm hover:bg-yellow-50">★ Avaliar Distribuidor</a>
                                     <?php elseif($d['ja_avaliou']): ?>
                                         <div class="text-center text-green-600 text-sm font-medium">Avaliação Enviada ✓</div>
                                     <?php else: ?>
                                         <div class="text-center text-gray-400 text-xs">Em andamento...</div>
                                     <?php endif; ?>
                                 <?php endif; ?>
-
                             <?php endif; ?>
                         </div>
                     </div>
