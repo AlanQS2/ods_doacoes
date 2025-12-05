@@ -50,6 +50,7 @@ PHP 7.4 ou superior.
 Banco de dados MySQL.
 
 `Passo 1: Clonar o Repositório`
+
 Bash
 
 git clone https://github.com/seu-usuario/alimentosolidario.git
