@@ -50,6 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body class="bg-green-50 min-h-screen flex items-center justify-center p-4">
     <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-lg">
         <h2 class="text-2xl font-bold text-center text-gray-800 mb-6">Cadastro</h2>
+        
         <?php if($erro): ?><div class="bg-red-100 text-red-700 p-3 rounded mb-4"><?= $erro ?></div><?php endif; ?>
         <?php if($sucesso): ?><div class="bg-green-100 text-green-700 p-3 rounded mb-4"><?= $sucesso ?></div><?php endif; ?>
 
@@ -77,6 +78,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
 
             <button type="submit" class="w-full bg-green-600 text-white py-3 rounded font-bold hover:bg-green-700">Cadastrar</button>
+            <div class="mt-6 text-center text-sm">
+            <a href="index.php" class="text-gray-500 hover:text-gray-900 mr-4">← Voltar para Home</a>
+            </div>
         </form>
     </div>
 </body>
