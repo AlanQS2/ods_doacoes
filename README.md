@@ -49,19 +49,20 @@ PHP 7.4 ou superior.
 
 Banco de dados MySQL.
 
-Passo 1: Clonar o Repositório
+`Passo 1: Clonar o Repositório`
 Bash
 
 git clone https://github.com/seu-usuario/alimentosolidario.git
-cd alimentosolidario
-Passo 2: Configurar o Banco de Dados
+cd alimentosolidario`
+
+`Passo 2: Configurar o Banco de Dados`
 Abra o phpMyAdmin (ou seu gerenciador SQL preferido).
 
 Crie um novo banco de dados chamado ods_doacao.
 
 Execute o script SQL abaixo na aba SQL para criar as tabelas e o usuário administrador:
 
-SQL
+`SQL`
 
 -- Criação das Tabelas
 
@@ -154,10 +155,11 @@ CREATE TABLE meal_reviews (
 -- Senha: admin123 (Hash gerado abaixo)
 INSERT INTO users (nome, email, password_hash, telefone, cidade, estado, tipo, termos_aceitos, banned) 
 VALUES ('Administrador Sistema', 'admin@alimentosolidario.com', '$2y$10$e.g./l.W.d/.r./././././././././././././././././.', '0000000000', 'Sistema', 'BR', 'admin', 1, 0);
-Passo 3: Configurar Conexão
+
+`Passo 3: Configurar Conexão`
 Verifique o arquivo db.php na raiz do projeto. Se o seu MySQL tiver senha (o padrão do XAMPP é sem senha), edite esta parte:
 
-PHP
+`PHP`
 
 $host = 'localhost';
 $db   = 'ods_doacao';
@@ -166,14 +168,14 @@ $pass = '';         // Sua senha MySQL
 Passo 4: Executar
 Mova a pasta do projeto para dentro do diretório do seu servidor (ex: htdocs no XAMPP).
 
-Acesse no navegador: http://localhost/alimentosolidario.
+`Acesse no navegador: http://localhost/alimentosolidario.`
 
 🔐 Acesso Administrativo
 Para acessar o painel de controle e moderação:
 
-URL: http://localhost/alimentosolidario/login.php
+`URL: http://localhost/alimentosolidario/login.php`
 
-Email: admin@alimentosolidario.com
+`Email: admin@alimentosolidario.com`
 
 Senha: admin123 (Nota: Se o hash da senha no SQL acima não funcionar devido a diferenças de versão do PHP, crie um usuário comum no cadastro e altere manualmente a coluna tipo para admin no banco de dados).
 
