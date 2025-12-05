@@ -7,7 +7,7 @@ $tipo_usuario = $_SESSION['user_tipo'];
 $cidade_usuario = $_SESSION['user_cidade'];
 $nome_usuario = $_SESSION['user_nome'];
 
-// Buscar lista de cozinheiros para modal (apenas da mesma cidade)
+// Buscar cozinheiros (para modal de entrega de doação)
 $cozinheiros = [];
 if ($tipo_usuario == 'distribuidor') {
     $stmtCoz = $pdo->prepare("SELECT id, nome, cidade FROM users WHERE tipo = 'cozinheiro' AND cidade = ?");
@@ -17,98 +17,75 @@ if ($tipo_usuario == 'distribuidor') {
 
 $termo_busca = $_GET['q'] ?? '';
 
-// --- CONFIGURAÇÃO DA QUERY ---
+// --- 1. CONSULTA DE DOAÇÕES ---
+// CORREÇÃO 1: O nome do campo aqui é 'ja_avaliou'
+$sql_check_avaliacao_doacao = ", (SELECT COUNT(*) FROM reviews r WHERE r.doacao_id = d.id AND r.avaliador_id = :uid_av_d) as ja_avaliou";
 
-// Conta quantas avaliações EU já fiz para essa doação
-$sql_check_avaliacao = ", (SELECT COUNT(*) FROM reviews r WHERE r.doacao_id = d.id AND r.avaliador_id = :uid_avaliacao) as qtd_avaliacoes";
-
-$sql = "SELECT d.*, u.nome as produtor_nome, u.cidade, 
+// CORREÇÃO 2: Adicionado 'u.cidade' na seleção para evitar o erro de cidade indefinida
+$sql_doacao = "SELECT d.*, u.nome as produtor_nome, u.cidade,
         (SELECT nome FROM users WHERE id = d.distribuidor_id) as distribuidor_nome,
         (SELECT nome FROM users WHERE id = d.cozinheiro_id) as cozinheiro_nome
-        $sql_check_avaliacao
-        FROM donations d 
-        JOIN users u ON d.produtor_id = u.id 
-        WHERE u.cidade = :cidade_filtro";
+        $sql_check_avaliacao_doacao
+        FROM donations d JOIN users u ON d.produtor_id = u.id WHERE u.cidade = :cidade_d";
 
-$params = [];
-
-// Variáveis para estatísticas da sidebar
-$stats_ativas = 0;
-$stats_total = 0;
+$params_d = ['uid_av_d' => $user_id, 'cidade_d' => $cidade_usuario];
 
 if ($tipo_usuario == 'produtor') {
-    $sql = "SELECT d.*, u.nome as produtor_nome, u.cidade, 
+    $sql_doacao = "SELECT d.*, u.nome as produtor_nome, u.cidade,
             (SELECT nome FROM users WHERE id = d.distribuidor_id) as distribuidor_nome,
             (SELECT nome FROM users WHERE id = d.cozinheiro_id) as cozinheiro_nome
-            $sql_check_avaliacao
-            FROM donations d JOIN users u ON d.produtor_id = u.id 
-            WHERE d.produtor_id = :uid_produtor";
+            $sql_check_avaliacao_doacao
+            FROM donations d JOIN users u ON d.produtor_id = u.id WHERE d.produtor_id = :uid_d";
+    $params_d = ['uid_av_d' => $user_id, 'uid_d' => $user_id];
+} elseif ($tipo_usuario == 'distribuidor') {
+    $sql_doacao .= " AND (d.status = 'disponivel' OR ((d.status = 'coletada' OR d.status = 'aguardando_aceite' OR d.status = 'entregue') AND d.distribuidor_id = :uid_d))";
+    $params_d['uid_d'] = $user_id;
+} elseif ($tipo_usuario == 'cozinheiro') {
+    $sql_doacao .= " AND (d.status = 'disponivel' OR ((d.status = 'entregue' OR d.status = 'aguardando_aceite') AND d.cozinheiro_id = :uid_d))";
+    $params_d['uid_d'] = $user_id;
+}
+$sql_doacao .= " ORDER BY d.created_at DESC";
+$stmt_d = $pdo->prepare($sql_doacao);
+$stmt_d->execute($params_d);
+$doacoes = $stmt_d->fetchAll();
+
+
+// --- 2. CONSULTA DE REFEIÇÕES ---
+$refeicoes = [];
+if ($tipo_usuario != 'produtor') { 
     
-    $params = [
-        'uid_avaliacao' => $user_id,
-        'uid_produtor' => $user_id
-    ];
+    $sql_check_avaliacao_ref = ", (SELECT COUNT(*) FROM meal_reviews r WHERE r.refeicao_id = m.id AND r.avaliador_id = :uid_av_m) as ja_avaliou";
 
-} else {
-    $params = [
-        'uid_avaliacao' => $user_id,
-        'cidade_filtro' => $cidade_usuario
-    ];
-
-    if ($termo_busca) {
-        $sql .= " AND (d.titulo LIKE :busca_titulo OR d.descricao LIKE :busca_desc)";
-        $params['busca_titulo'] = "%$termo_busca%";
-        $params['busca_desc']   = "%$termo_busca%";
-    }
+    // CORREÇÃO 2: Adicionado 'u.cidade' aqui também para o cozinheiro da refeição
+    $sql_refeicao = "SELECT m.*, u.nome as cozinheiro_nome, u.cidade,
+            (SELECT nome FROM users WHERE id = m.distribuidor_id) as distribuidor_nome
+            $sql_check_avaliacao_ref
+            FROM meals m JOIN users u ON m.cozinheiro_id = u.id WHERE u.cidade = :cidade_m";
     
-    if ($tipo_usuario == 'distribuidor') {
-        $sql .= " AND (
-                    d.status = 'disponivel' 
-                    OR (
-                        (d.status = 'coletada' OR d.status = 'aguardando_aceite' OR d.status = 'entregue') 
-                        AND d.distribuidor_id = :uid_distribuidor
-                    )
-                  )";
-        $params['uid_distribuidor'] = $user_id;
+    $params_m = ['uid_av_m' => $user_id, 'cidade_m' => $cidade_usuario];
 
-    } elseif ($tipo_usuario == 'cozinheiro') {
-        $sql .= " AND (
-                    d.status = 'disponivel' 
-                    OR (
-                        (d.status = 'entregue' OR d.status = 'aguardando_aceite') 
-                        AND d.cozinheiro_id = :uid_cozinheiro
-                    )
-                  )";
-        $params['uid_cozinheiro'] = $user_id;
+    if ($tipo_usuario == 'cozinheiro') {
+        $sql_refeicao = "SELECT m.*, u.nome as cozinheiro_nome, u.cidade,
+            (SELECT nome FROM users WHERE id = m.distribuidor_id) as distribuidor_nome
+            $sql_check_avaliacao_ref
+            FROM meals m JOIN users u ON m.cozinheiro_id = u.id WHERE m.cozinheiro_id = :uid_m";
+        $params_m = ['uid_av_m' => $user_id, 'uid_m' => $user_id];
+    } elseif ($tipo_usuario == 'distribuidor') {
+        $sql_refeicao .= " AND (m.status = 'disponivel' OR m.distribuidor_id = :uid_m)";
+        $params_m['uid_m'] = $user_id;
     }
+
+    $sql_refeicao .= " ORDER BY m.created_at DESC";
+    $stmt_m = $pdo->prepare($sql_refeicao);
+    $stmt_m->execute($params_m);
+    $refeicoes = $stmt_m->fetchAll();
 }
 
-$sql .= " ORDER BY FIELD(d.status, 'aguardando_aceite', 'coletada', 'disponivel', 'entregue'), d.created_at DESC";
-
-try {
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
-    $doacoes = $stmt->fetchAll();
-
-    // Calcular estatísticas simples para a sidebar
-    $stats_total = count($doacoes);
-    foreach($doacoes as $d) {
-        if ($d['status'] == 'disponivel' || $d['status'] == 'coletada') {
-            $stats_ativas++;
-        }
-    }
-
-} catch (PDOException $e) {
-    die("Erro ao carregar feed: " . $e->getMessage());
-}
-
-// Função auxiliar para calcular dias restantes
 function diasRestantes($data_limite) {
     $hoje = new DateTime();
     $limite = new DateTime($data_limite);
     $intervalo = $hoje->diff($limite);
-    $dias = $intervalo->format('%r%a'); // %r inclui o sinal negativo se venceu
-    
+    $dias = $intervalo->format('%r%a');
     if ($dias < 0) return "Vencido";
     if ($dias == 0) return "Vence hoje";
     return "-" . $dias . " dias";
@@ -120,240 +97,196 @@ function diasRestantes($data_limite) {
 <head>
     <meta charset="UTF-8">
     <title>AlimentoSolidário</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { font-family: 'Inter', sans-serif; }
-    </style>
+    <style>body { font-family: 'Inter', sans-serif; }</style>
     <script>
-        function toggleModal(doacaoId) {
-            const modal = document.getElementById('modal-' + doacaoId);
+        function toggleModal(id) {
+            const modal = document.getElementById(id);
             if (modal) modal.classList.toggle('hidden');
         }
     </script>
 </head>
-<body class="bg-[#F8FAFC]"> <header class="bg-white border-b border-gray-200 sticky top-0 z-50">
-        <div class="container mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+<body class="bg-[#F8FAFC]">
+
+    <header class="bg-white border-b border-gray-200 sticky top-0 z-50">
+        <div class="container mx-auto px-4 h-16 flex items-center justify-between">
             <div class="flex items-center gap-4">
-                <a href="index.php" class="flex items-center gap-2 text-gray-500 hover:text-gray-900 transition bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-medium">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
-                    Voltar
-                </a>
                 <div class="flex items-center gap-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.77 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.77 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></svg>
                     <span class="text-lg font-semibold text-gray-900">AlimentoSolidário</span>
                 </div>
             </div>
-            
             <div class="flex items-center gap-3">
-                <div class="hidden md:flex flex-col items-end mr-2">
-                    <span class="text-sm font-semibold text-gray-900"><?= htmlspecialchars($nome_usuario) ?></span>
-                    <span class="text-xs text-gray-500 capitalize">(<?= $tipo_usuario ?>)</span>
+                <div class="text-right hidden md:block">
+                    <span class="block text-sm font-semibold text-gray-900"><?= htmlspecialchars($nome_usuario) ?></span>
+                    <span class="block text-xs text-gray-500 capitalize"><?= $tipo_usuario ?></span>
                 </div>
-                <div class="h-8 w-8 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm">
-                    <?= strtoupper(substr($nome_usuario, 0, 2)) ?>
-                </div>
-                <a href="logout.php" class="text-gray-400 hover:text-red-500 ml-2" title="Sair">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-                </a>
+                <a href="logout.php" class="text-red-500 hover:text-red-700 ml-2">Sair</a>
             </div>
         </div>
     </header>
 
-    <div class="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="container mx-auto px-4 py-8">
         <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
             
             <div class="lg:col-span-1 space-y-6">
-                <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sticky top-24">
                     <div class="flex items-center gap-4 mb-6">
-                        <div class="h-12 w-12 rounded-full bg-green-50 flex items-center justify-center">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.77 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></svg>
+                        <div class="h-12 w-12 rounded-full bg-green-50 flex items-center justify-center font-bold text-green-600 text-xl">
+                            <?= strtoupper(substr($nome_usuario, 0, 1)) ?>
                         </div>
                         <div>
                             <h2 class="font-semibold text-gray-900"><?= htmlspecialchars($nome_usuario) ?></h2>
-                            <p class="text-sm text-gray-500 capitalize"><?= $tipo_usuario ?> • <?= htmlspecialchars($cidade_usuario) ?></p>
+                            <p class="text-sm text-gray-500 capitalize"><?= $cidade_usuario ?></p>
                         </div>
                     </div>
 
                     <?php if($tipo_usuario == 'produtor'): ?>
-                        <a href="criar_doacao.php" class="flex items-center justify-center w-full bg-[#10B981] hover:bg-[#059669] text-white font-medium py-2.5 rounded-lg transition-colors mb-6 shadow-sm">
-                            <span class="mr-2 text-lg">+</span> Nova Doação
-                        </a>
+                        <a href="criar_doacao.php" class="flex items-center justify-center w-full bg-[#10B981] hover:bg-[#059669] text-white font-medium py-2.5 rounded-lg transition-colors mb-4 shadow-sm">+ Doar Ingrediente</a>
+                    <?php elseif($tipo_usuario == 'cozinheiro'): ?>
+                        <a href="criar_refeicao.php" class="flex items-center justify-center w-full bg-orange-600 hover:bg-orange-700 text-white font-medium py-2.5 rounded-lg transition-colors mb-4 shadow-sm">+ Criar Refeição</a>
                     <?php endif; ?>
-
-                    <div class="border-t border-gray-100 pt-4">
-                        <h3 class="text-sm font-semibold text-gray-900 mb-3">Estatísticas</h3>
-                        <div class="flex justify-between items-center mb-2 text-sm">
-                            <span class="text-gray-500">Doações ativas</span>
-                            <span class="font-medium text-gray-900"><?= $stats_ativas ?></span>
-                        </div>
-                        <div class="flex justify-between items-center text-sm">
-                            <span class="text-gray-500">Total listado</span>
-                            <span class="font-medium text-gray-900"><?= $stats_total ?></span>
-                        </div>
-                    </div>
                     
-                    <div class="mt-4 pt-4 border-t border-gray-100">
-                        <a href="perfil.php" class="text-sm text-gray-500 hover:text-green-600 font-medium">Editar Perfil →</a>
-                    </div>
+                    <a href="perfil.php" class="block text-center text-sm text-gray-500 hover:text-green-600 mt-2">Editar Perfil</a>
                 </div>
             </div>
 
-            <div class="lg:col-span-3">
-                <div class="mb-6">
-                    <h1 class="text-2xl font-bold text-gray-900">
-                        <?php 
-                            if($tipo_usuario == 'produtor') echo "Minhas Doações";
-                            elseif($tipo_usuario == 'distribuidor') echo "Feed de Coletas";
-                            else echo "Ingredientes Disponíveis";
-                        ?>
-                    </h1>
-                    <p class="text-gray-500 text-sm mt-1">Gerencie e visualize as doações de alimentos.</p>
-                </div>
+            <div class="lg:col-span-3 space-y-10">
+                
+                <?php if($tipo_usuario != 'produtor' || !empty($doacoes)): ?>
+                <div>
+                    <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/></svg>
+                        Ingredientes & Doações
+                    </h2>
+                    
+                    <?php if(empty($doacoes)): ?>
+                        <p class="text-gray-500 text-sm bg-white p-4 rounded-xl border border-dashed text-center">Nenhuma doação ativa.</p>
+                    <?php endif; ?>
 
-                <form class="mb-6 relative">
-                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <svg class="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                    </div>
-                    <input type="text" name="q" value="<?= htmlspecialchars($termo_busca) ?>" class="block w-full pl-10 pr-3 py-2.5 border border-gray-200 rounded-xl leading-5 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 sm:text-sm" placeholder="Buscar por título ou descrição...">
-                </form>
-
-                <?php if(empty($doacoes)): ?>
-                    <div class="bg-white rounded-2xl border border-gray-200 p-12 text-center">
-                        <div class="mx-auto h-12 w-12 text-gray-300 mb-4">
-                            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg>
-                        </div>
-                        <h3 class="text-lg font-medium text-gray-900">Nenhuma doação encontrada</h3>
-                        <p class="mt-1 text-gray-500">Tente ajustar seus filtros de busca.</p>
-                    </div>
-                <?php endif; ?>
-
-                <div class="space-y-4">
-                    <?php foreach($doacoes as $d): ?>
-                        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col md:flex-row hover:shadow-md transition-shadow duration-200">
-                            
-                            <div class="w-full md:w-48 h-48 md:h-auto relative flex-shrink-0">
-                                <img src="https://source.unsplash.com/random/400x400/?<?= $d['tipo'] == 'frutas' ? 'fruit' : 'vegetable' ?>&sig=<?= $d['id'] ?>" 
-                                     class="w-full h-full object-cover" 
-                                     alt="Imagem do alimento">
-                            </div>
-
-                            <div class="p-6 flex-1 flex flex-col">
-                                <div class="flex justify-between items-start mb-2">
-                                    <div>
-                                        <div class="flex items-center gap-3">
-                                            <h3 class="text-lg font-bold text-gray-900"><?= htmlspecialchars($d['titulo']) ?></h3>
-                                            
-                                            <?php
-                                                $statusClass = 'bg-gray-100 text-gray-700';
-                                                $statusText = $d['status'];
-                                                if($d['status'] == 'disponivel') { $statusClass = 'bg-gray-900 text-white'; $statusText = 'Disponível'; }
-                                                elseif($d['status'] == 'entregue') { $statusClass = 'bg-green-100 text-green-800'; $statusText = 'Entregue'; }
-                                                elseif($d['status'] == 'aguardando_aceite') { $statusClass = 'bg-yellow-100 text-yellow-800'; $statusText = 'Aguardando'; }
-                                                elseif($d['status'] == 'coletada') { $statusClass = 'bg-blue-100 text-blue-800'; $statusText = 'Coletada'; }
-                                            ?>
-                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium <?= $statusClass ?>">
-                                                <?= $statusText ?>
-                                            </span>
-                                        </div>
-                                        
-                                        <div class="flex items-center gap-3 mt-1 text-sm text-gray-500">
-                                            <span class="flex items-center gap-1">
-                                                <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                                                <?= htmlspecialchars($d['produtor_nome']) ?>
-                                            </span>
-                                            <span class="flex items-center gap-1">
-                                                <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                                                <?= htmlspecialchars($d['cidade']) ?>
-                                            </span>
-                                            <span class="flex items-center gap-1 font-medium text-gray-700">
-                                                <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
-                                                <?= htmlspecialchars($d['quantidade']) ?> <?= htmlspecialchars($d['unidade']) ?>
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    <?php if($d['status'] == 'disponivel'): ?>
-                                        <span class="flex items-center gap-1 px-2 py-1 rounded text-xs font-bold bg-[#DC2626] text-white">
-                                            <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                            <?= diasRestantes($d['data_limite']) ?>
-                                        </span>
-                                    <?php endif; ?>
+                    <div class="space-y-4">
+                        <?php foreach($doacoes as $d): ?>
+                            <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col md:flex-row hover:shadow-md transition-shadow">
+                                <div class="w-full md:w-48 h-48 md:h-auto bg-green-50 flex items-center justify-center flex-shrink-0 text-green-200">
+                                    <svg class="h-20 w-20" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
                                 </div>
 
-                                <p class="text-gray-600 text-sm mt-2 mb-4 line-clamp-2">
-                                    <?= htmlspecialchars($d['descricao']) ?>
-                                </p>
-
-                                <div class="mt-auto flex items-center justify-between border-t border-gray-100 pt-4">
-                                    <div class="flex gap-4 text-xs text-gray-400">
-                                        <span class="flex items-center gap-1">
-                                            <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                                            Colheita: <?= date('d/m/Y', strtotime($d['data_colheita'])) ?>
-                                        </span>
-                                        <span class="flex items-center gap-1">
-                                            <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                            Limite: <?= date('d/m/Y', strtotime($d['data_limite'])) ?>
-                                        </span>
+                                <div class="p-6 flex-1 flex flex-col">
+                                    <div class="flex justify-between items-start mb-2">
+                                        <div>
+                                            <h3 class="text-lg font-bold text-gray-900"><?= htmlspecialchars($d['titulo']) ?></h3>
+                                            <span class="text-sm text-gray-500">Produtor: <?= htmlspecialchars($d['produtor_nome']) ?></span>
+                                        </div>
+                                        <span class="px-2 py-1 rounded text-xs font-bold bg-gray-100 text-gray-600"><?= strtoupper($d['status']) ?></span>
                                     </div>
-
-                                    <div class="flex items-center">
+                                    <p class="text-gray-600 text-sm mb-4"><?= htmlspecialchars($d['descricao']) ?></p>
+                                    
+                                    <div class="text-xs text-gray-500 mb-4 space-y-1">
+                                        <p><strong>Data de colheita:</strong> <?= date('d/m/Y', strtotime($d['data_colheita'])) ?></p>
+                                        <p><strong>Data limite:</strong> <?= date('d/m/Y', strtotime($d['data_limite'])) ?> <?php if($d['status'] == 'disponivel'): ?><span class="text-red-600 font-semibold"></span><?php endif; ?></p>
+                                    </div>
+                                    
+                                    <div class="mt-auto pt-3 border-t border-gray-100">
                                         <?php if($tipo_usuario == 'distribuidor' && $d['status'] == 'disponivel'): ?>
                                             <form action="processar_acao.php" method="POST">
                                                 <input type="hidden" name="acao" value="coletar">
                                                 <input type="hidden" name="doacao_id" value="<?= $d['id'] ?>">
-                                                <button class="text-sm font-medium text-blue-600 hover:text-blue-800 transition">Coletar agora</button>
+                                                <button class="text-blue-600 font-medium text-sm hover:underline">Coletar Ingrediente</button>
                                             </form>
-                                        
                                         <?php elseif($d['status'] == 'coletada' && $d['distribuidor_id'] == $user_id && $tipo_usuario == 'distribuidor'): ?>
-                                            <button onclick="toggleModal(<?= $d['id'] ?>)" class="text-sm font-medium text-orange-600 hover:text-orange-800 transition">Entregar</button>
-                                            <div id="modal-<?= $d['id'] ?>" class="hidden fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
-                                                <div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
-                                                    <h3 class="font-bold mb-4 text-gray-900">Selecionar Cozinheiro</h3>
+                                            <button onclick="toggleModal('modal-d-<?= $d['id'] ?>')" class="text-orange-600 font-medium text-sm hover:underline">Entregar p/ Cozinheiro</button>
+                                            <div id="modal-d-<?= $d['id'] ?>" class="hidden fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+                                                <div class="bg-white rounded-lg p-6 w-full max-w-sm">
+                                                    <h3 class="font-bold mb-4">Escolher Cozinheiro</h3>
                                                     <form action="processar_acao.php" method="POST">
                                                         <input type="hidden" name="acao" value="entregar">
                                                         <input type="hidden" name="doacao_id" value="<?= $d['id'] ?>">
-                                                        <select name="cozinheiro_id" required class="w-full border border-gray-300 rounded-lg p-2.5 mb-4 text-sm bg-white focus:ring-2 focus:ring-green-500 focus:outline-none">
-                                                            <option value="">Selecione...</option>
+                                                        <select name="cozinheiro_id" class="w-full border p-2 rounded mb-4 text-sm">
                                                             <?php foreach($cozinheiros as $coz): ?>
                                                                 <option value="<?= $coz['id'] ?>"><?= htmlspecialchars($coz['nome']) ?></option>
                                                             <?php endforeach; ?>
                                                         </select>
-                                                        <div class="flex gap-2 justify-end">
-                                                            <button type="button" onclick="toggleModal(<?= $d['id'] ?>)" class="px-4 py-2 text-gray-600 hover:bg-gray-50 rounded-lg text-sm font-medium">Cancelar</button>
-                                                            <button class="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-orange-700">Confirmar</button>
-                                                        </div>
+                                                        <button class="bg-orange-600 text-white w-full py-2 rounded">Confirmar</button>
+                                                        <button type="button" onclick="toggleModal('modal-d-<?= $d['id'] ?>')" class="block text-center w-full mt-2 text-sm text-gray-500">Cancelar</button>
                                                     </form>
                                                 </div>
                                             </div>
-
-                                        <?php elseif($d['status'] == 'aguardando_aceite' && $tipo_usuario == 'cozinheiro'): ?>
-                                            <div class="flex gap-3">
-                                                <form action="processar_acao.php" method="POST">
-                                                    <input type="hidden" name="acao" value="aceitar_entrega">
-                                                    <input type="hidden" name="doacao_id" value="<?= $d['id'] ?>">
-                                                    <button class="text-sm font-medium text-green-600 hover:text-green-800">Aceitar</button>
-                                                </form>
-                                                <form action="processar_acao.php" method="POST">
-                                                    <input type="hidden" name="acao" value="recusar_entrega">
-                                                    <input type="hidden" name="doacao_id" value="<?= $d['id'] ?>">
-                                                    <button class="text-sm font-medium text-red-600 hover:text-red-800">Recusar</button>
-                                                </form>
+                                        <?php elseif($d['status'] == 'aguardando_aceite' && $d['cozinheiro_id'] == $user_id && $tipo_usuario == 'cozinheiro'): ?>
+                                            <div class="flex gap-4">
+                                                <form action="processar_acao.php" method="POST"><input type="hidden" name="acao" value="aceitar_entrega"><input type="hidden" name="doacao_id" value="<?= $d['id'] ?>"><button class="text-green-600 font-bold text-sm">Aceitar</button></form>
+                                                <form action="processar_acao.php" method="POST"><input type="hidden" name="acao" value="recusar_entrega"><input type="hidden" name="doacao_id" value="<?= $d['id'] ?>"><button class="text-red-600 font-bold text-sm">Recusar</button></form>
                                             </div>
-
                                         <?php elseif($d['status'] == 'entregue'): ?>
-                                            <a href="avaliar.php?doacao=<?= $d['id'] ?>" class="text-sm font-medium text-yellow-600 hover:text-yellow-800 flex items-center gap-1">
-                                                <span>★</span> Avaliar Participantes
-                                            </a>
+                                            <a href="avaliar.php?tipo=doacao&id=<?= $d['id'] ?>" class="text-yellow-600 font-medium text-sm hover:underline">★ Avaliar Participantes</a>
+                                            <?php if($d['ja_avaliou'] > 0): ?><span class="text-xs text-green-600 ml-2">✓ Avaliado</span><?php endif; ?>
                                         <?php endif; ?>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    <?php endforeach; ?>
+                        <?php endforeach; ?>
+                    </div>
                 </div>
+                <?php endif; ?>
+
+                <?php if($tipo_usuario != 'produtor'): ?>
+                <div>
+                    <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+                        Refeições Prontas para Distribuição
+                    </h2>
+
+                    <?php if(empty($refeicoes)): ?>
+                        <p class="text-gray-500 text-sm bg-white p-4 rounded-xl border border-dashed text-center">Nenhuma refeição disponível no momento.</p>
+                    <?php endif; ?>
+
+                    <div class="space-y-4">
+                        <?php foreach($refeicoes as $m): ?>
+                            <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col md:flex-row hover:shadow-md transition-shadow">
+                                <div class="w-full md:w-48 h-48 md:h-auto bg-orange-50 flex items-center justify-center flex-shrink-0 text-orange-200">
+                                    <svg class="h-20 w-20" fill="currentColor" viewBox="0 0 24 24"><path d="M12 22c4.97 0 9-4.03 9-9h-1.6c-.76 2.37-2.63 4.24-5 5V22h-4.8v-4c-2.37-.76-4.24-2.63-5-5H3c0 4.97 4.03 9 9 9zM19 9c0-3.87-3.13-7-7-7S5 5.13 5 9c0 .17.02.34.05.5H12v2H5.5c.32 1.46 1.35 2.65 2.7 3.29.53.25 1.13.38 1.8.38 2.39 0 4.36-1.84 4.9-4.17H22v-2h-3.05c.03-.16.05-.33.05-.5z"/></svg>
+                                </div>
+
+                                <div class="p-6 flex-1 flex flex-col">
+                                    <div class="flex justify-between items-start mb-2">
+                                        <div>
+                                            <h3 class="text-lg font-bold text-gray-900"><?= htmlspecialchars($m['titulo']) ?></h3>
+                                            <span class="text-sm text-gray-500">Cozinheiro: <?= htmlspecialchars($m['cozinheiro_nome']) ?></span>
+                                        </div>
+                                        <span class="px-2 py-1 rounded text-xs font-bold bg-gray-100 text-gray-600"><?= strtoupper($m['status']) ?></span>
+                                    </div>
+                                    <p class="text-gray-600 text-sm mb-4">
+                                        Quantidade: <?= htmlspecialchars($m['quantidade']) ?>
+                                    </p>
+                                    <div class="text-xs text-gray-500 mb-4">
+                                        <p><strong>Data de validade:</strong> <?= date('d/m/Y', strtotime($m['data_validade'])) ?></p>
+                                    </div>
+
+                                    <div class="mt-auto pt-3 border-t border-gray-100">
+                                        <?php if($tipo_usuario == 'distribuidor' && $m['status'] == 'disponivel'): ?>
+                                            <form action="processar_acao.php" method="POST">
+                                                <input type="hidden" name="acao" value="coletar_refeicao">
+                                                <input type="hidden" name="refeicao_id" value="<?= $m['id'] ?>">
+                                                <button class="text-blue-600 font-medium text-sm hover:underline">Coletar para Distribuição</button>
+                                            </form>
+                                        <?php elseif($tipo_usuario == 'distribuidor' && $m['status'] == 'coletada' && $m['distribuidor_id'] == $user_id): ?>
+                                            <form action="processar_acao.php" method="POST">
+                                                <input type="hidden" name="acao" value="finalizar_distribuicao">
+                                                <input type="hidden" name="refeicao_id" value="<?= $m['id'] ?>">
+                                                <button class="text-green-600 font-medium text-sm hover:underline">Marcar como Entregue (Finalizar)</button>
+                                            </form>
+                                        <?php elseif($m['status'] == 'entregue'): ?>
+                                            <a href="avaliar.php?tipo=refeicao&id=<?= $m['id'] ?>" class="text-yellow-600 font-medium text-sm hover:underline">★ Avaliar Parceiro</a>
+                                            <?php if($m['ja_avaliou'] > 0): ?><span class="text-xs text-green-600 ml-2">✓ Avaliado</span><?php endif; ?>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+
             </div>
         </div>
     </div>
