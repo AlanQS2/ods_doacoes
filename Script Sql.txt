@@ -1,0 +1,86 @@
+CREATE DATABASE IF NOT EXISTS ods_doacao;
+USE ods_doacao;
+
+CREATE TABLE users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nome VARCHAR(100) NOT NULL,
+    email VARCHAR(100) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    telefone VARCHAR(20),
+    cidade VARCHAR(100) NOT NULL,
+    estado VARCHAR(2) NOT NULL,
+    tipo ENUM('produtor', 'distribuidor', 'cozinheiro', 'admin') NOT NULL,
+    capacidade_transporte VARCHAR(100),
+    capacidade_producao VARCHAR(100),
+    disponibilidade TEXT,
+    termos_aceitos TINYINT(1) DEFAULT 0,
+    banned TINYINT(1) DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE donations (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    produtor_id INT NOT NULL,
+    titulo VARCHAR(150) NOT NULL,
+    descricao TEXT,
+    tipo ENUM('frutas', 'vegetais', 'ambos') NOT NULL,
+    quantidade DECIMAL(10,2) NOT NULL,
+    unidade VARCHAR(20) NOT NULL,
+    data_colheita DATE,
+    data_limite DATE,
+    status ENUM('disponivel', 'coletada', 'aguardando_aceite', 'entregue') DEFAULT 'disponivel',
+    distribuidor_id INT,
+    cozinheiro_id INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (produtor_id) REFERENCES users(id),
+    FOREIGN KEY (distribuidor_id) REFERENCES users(id),
+    FOREIGN KEY (cozinheiro_id) REFERENCES users(id)
+);
+
+CREATE TABLE meals (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    cozinheiro_id INT NOT NULL,
+    titulo VARCHAR(150) NOT NULL,
+    quantidade VARCHAR(100) NOT NULL,
+    data_producao DATE,
+    data_validade DATE,
+    status ENUM('disponivel', 'coletada', 'entregue') DEFAULT 'disponivel',
+    distribuidor_id INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (cozinheiro_id) REFERENCES users(id),
+    FOREIGN KEY (distribuidor_id) REFERENCES users(id)
+);
+
+CREATE TABLE meal_ingredients (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    meal_id INT NOT NULL,
+    donation_id INT NOT NULL,
+    FOREIGN KEY (meal_id) REFERENCES meals(id),
+    FOREIGN KEY (donation_id) REFERENCES donations(id)
+);
+
+CREATE TABLE reviews (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    doacao_id INT NOT NULL,
+    avaliador_id INT NOT NULL,
+    avaliado_id INT NOT NULL,
+    nota INT NOT NULL,
+    comentario TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (doacao_id) REFERENCES donations(id),
+    FOREIGN KEY (avaliador_id) REFERENCES users(id),
+    FOREIGN KEY (avaliado_id) REFERENCES users(id)
+);
+
+CREATE TABLE meal_reviews (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    refeicao_id INT NOT NULL,
+    avaliador_id INT NOT NULL,
+    avaliado_id INT NOT NULL,
+    nota INT NOT NULL,
+    comentario TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (refeicao_id) REFERENCES meals(id),
+    FOREIGN KEY (avaliador_id) REFERENCES users(id),
+    FOREIGN KEY (avaliado_id) REFERENCES users(id)
+);
