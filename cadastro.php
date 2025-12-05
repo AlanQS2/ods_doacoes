@@ -5,19 +5,19 @@ $erro = '';
 $sucesso = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // ... Lógica PHP Mantida (igual ao original) ...
     // Validação básica
     if (!isset($_POST['termos'])) {
-        $erro = "Você deve aceitar os Termos de Uso para continuar."; // RB005
+        $erro = "Você deve aceitar os Termos de Uso para continuar."; 
     } else {
         $nome = trim($_POST['nome']);
         $email = trim($_POST['email']);
         $senha = $_POST['password'];
         $tipo = $_POST['tipo'];
-        $cidade = trim($_POST['cidade']); // Essencial para RB001
+        $cidade = trim($_POST['cidade']); 
         $estado = trim($_POST['estado']);
         $telefone = $_POST['telefone'];
 
-        // Verifica duplicidade
         $stmt = $pdo->prepare("SELECT id FROM users WHERE email = ?");
         $stmt->execute([$email]);
         
@@ -25,7 +25,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $erro = "Este e-mail já está cadastrado.";
         } else {
             $senha_hash = password_hash($senha, PASSWORD_DEFAULT);
-            
             $sql = "INSERT INTO users (nome, email, password_hash, telefone, cidade, estado, tipo, termos_aceitos) VALUES (?, ?, ?, ?, ?, ?, ?, 1)";
             $stmt = $pdo->prepare($sql);
             
@@ -44,42 +43,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cadastro - ODS 2</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-green-50 min-h-screen flex items-center justify-center p-4">
-    <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-lg">
+    <div class="bg-white p-6 md:p-8 rounded-xl shadow-lg w-full max-w-lg">
         <h2 class="text-2xl font-bold text-center text-gray-800 mb-6">Cadastro</h2>
         
-        <?php if($erro): ?><div class="bg-red-100 text-red-700 p-3 rounded mb-4"><?= $erro ?></div><?php endif; ?>
-        <?php if($sucesso): ?><div class="bg-green-100 text-green-700 p-3 rounded mb-4"><?= $sucesso ?></div><?php endif; ?>
+        <?php if($erro): ?><div class="bg-red-100 text-red-700 p-3 rounded mb-4 text-sm"><?= $erro ?></div><?php endif; ?>
+        <?php if($sucesso): ?><div class="bg-green-100 text-green-700 p-3 rounded mb-4 text-sm"><?= $sucesso ?></div><?php endif; ?>
 
         <form method="POST" class="space-y-4">
-            <input type="text" name="nome" placeholder="Nome Completo" required class="w-full border p-2 rounded">
-            <input type="email" name="email" placeholder="Email" required class="w-full border p-2 rounded">
-            <input type="password" name="password" placeholder="Senha" required class="w-full border p-2 rounded">
+            <input type="text" name="nome" placeholder="Nome Completo" required class="w-full border p-2.5 rounded text-sm md:text-base focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300">
+            <input type="email" name="email" placeholder="Email" required class="w-full border p-2.5 rounded text-sm md:text-base focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300">
+            <input type="password" name="password" placeholder="Senha" required class="w-full border p-2.5 rounded text-sm md:text-base focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300">
             
-            <div class="grid grid-cols-2 gap-4">
-                <input type="text" name="cidade" placeholder="Cidade (Obrigatório)" required class="w-full border p-2 rounded">
-                <input type="text" name="estado" placeholder="UF" maxlength="2" required class="w-full border p-2 rounded uppercase">
+            <div class="grid grid-cols-3 gap-4">
+                <div class="col-span-2">
+                    <input type="text" name="cidade" placeholder="Cidade" required class="w-full border p-2.5 rounded text-sm md:text-base focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300">
+                </div>
+                <div>
+                    <input type="text" name="estado" placeholder="UF" maxlength="2" required class="w-full border p-2.5 rounded uppercase text-sm md:text-base focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300">
+                </div>
             </div>
             
-            <input type="text" name="telefone" placeholder="Telefone" class="w-full border p-2 rounded">
+            <input type="text" name="telefone" placeholder="Telefone" class="w-full border p-2.5 rounded text-sm md:text-base focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300">
 
-            <select name="tipo" class="w-full border p-2 rounded">
+            <select name="tipo" class="w-full border p-2.5 rounded text-sm md:text-base bg-white focus:ring-2 focus:ring-green-500 focus:outline-none border-gray-300">
                 <option value="produtor">Produtor</option>
                 <option value="distribuidor">Distribuidor</option>
                 <option value="cozinheiro">Cozinheiro</option>
             </select>
 
             <div class="flex items-start gap-2 text-sm text-gray-600">
-                <input type="checkbox" name="termos" id="termos" required class="mt-1">
-                <label for="termos">Declaro que as informações são verdadeiras e aceito os <a href="#" class="text-green-600 underline">Termos de Uso</a> e o compromisso voluntário.</label>
+                <input type="checkbox" name="termos" id="termos" required class="mt-1 accent-green-600">
+                <label for="termos" class="leading-tight">Declaro que as informações são verdadeiras e aceito os <a href="#" class="text-green-600 underline">Termos de Uso</a>.</label>
             </div>
 
-            <button type="submit" class="w-full bg-green-600 text-white py-3 rounded font-bold hover:bg-green-700">Cadastrar</button>
+            <button type="submit" class="w-full bg-green-600 text-white py-3 rounded font-bold hover:bg-green-700 transition-colors shadow-sm text-sm md:text-base">Cadastrar</button>
+            
             <div class="mt-6 text-center text-sm">
-            <a href="index.php" class="text-gray-500 hover:text-gray-900 mr-4">← Voltar para Home</a>
+                <a href="index.php" class="text-gray-500 hover:text-gray-900 mr-4">← Home</a>
+                <a href="login.php" class="text-green-600 font-bold hover:underline">Já tenho conta</a>
             </div>
         </form>
     </div>
